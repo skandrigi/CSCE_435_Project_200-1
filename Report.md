@@ -1,13 +1,14 @@
 # CSCE 435 Group project
 
-## 0. Group number:
+## 0. Group number: 200-1
 
 ## 1. Group members:
 
-1. First
-2. Second
-3. Third
-4. Fourth
+1. Sandeep Kandrigi
+2. Benjamin Aleman
+3. Zachary Smith
+4. Skyler (Justin) Camenisch
+Communicating through iMessage
 
 ## 2. Project topic (e.g., parallel sorting algorithms)
 
@@ -16,17 +17,154 @@
 - Bitonic Sort:
 - Sample Sort:
 - Merge Sort:
-- Radix Sort:
+- Radix Sort: Sandeep Kandrigi
 
 ### 2b. Pseudocode for each parallel algorithm
 
 - For MPI programs, include MPI calls you will use to coordinate between processes
 
+Radix Sort Pseudocode (BASE 10):
+```
+RADIX-SORT(A, d):
+    // A: array of non-negative integers
+    // d: number of digits in the largest number
+    for i = 1 to d:
+        STABLE-COUNTING-SORT(A, digit i)
+
+STABLE-COUNTING-SORT(A, digit i):
+    // base 10 → digits 0..9
+    count = array of 10 zeros
+    output = array of length n
+
+    // 1. Count occurrences of each digit
+    for j = 0 to n-1:
+        k = (A[j] / 10^(i-1)) mod 10
+        count[k] += 1
+
+    // 2. Prefix sums → final positions
+    for k = 1 to 9:
+        count[k] += count[k-1]
+
+    // 3. Place elements, iterating backwards to keep it stable
+    for j = n-1 down to 0:
+        k = (A[j] / 10^(i-1)) mod 10
+        count[k] -= 1
+        output[count[k]] = A[j]
+
+    copy output into A
+```
+
+Radix Sort Pseudocode (BASE 256):
+```
+RADIX-SORT-256(A):
+    // A: array of non-negative 32-bit integers
+    // 32-bit int = 4 bytes → always 4 passes, one byte (8 bits) per pass
+    for i = 1 to 4:
+        STABLE-COUNTING-SORT-256(A, byte i)
+
+STABLE-COUNTING-SORT-256(A, byte i):
+    // base 256 → digits 0..255
+    count = array of 256 zeros
+    output = array of length n
+    shift = 8 * (i-1)
+
+    // 1. Count occurrences of each byte value
+    for j = 0 to n-1:
+        k = (A[j] >> shift) & 0xFF
+        count[k] += 1
+
+    // 2. Prefix sums → final positions
+    for k = 1 to 255:
+        count[k] += count[k-1]
+
+    // 3. Place elements, iterating backwards to keep it stable
+    for j = n-1 down to 0:
+        k = (A[j] >> shift) & 0xFF
+        count[k] -= 1
+        output[count[k]] = A[j]
+
+    copy output into A
+```
+
+Parallel Radix Sort Pseudocode (MPI, BASE 256):
+```
+PARALLEL-RADIX-SORT-256(n):
+    // n: total number of elements, p: number of MPI ranks
+    // each rank holds local_n = n / p elements (n, p are powers of 2)
+    MPI_Init()
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank)
+    MPI_Comm_size(MPI_COMM_WORLD, &p)
+    local_n = n / p
+    A = generate local_n non-negative ints for this rank
+
+    for i = 1 to 4:
+        shift = 8 * (i-1)
+
+        // 1. Local histogram of byte i
+        count = array of 256 zeros
+        for j = 0 to local_n-1:
+            count[(A[j] >> shift) & 0xFF] += 1
+
+        // 2. Global bucket totals and this rank's offset in each bucket   // comm_small
+        MPI_Allreduce(count, total, 256, MPI_INT, MPI_SUM, MPI_COMM_WORLD)
+        MPI_Exscan(count, rank_offset, 256, MPI_INT, MPI_SUM, MPI_COMM_WORLD)
+        if rank == 0: rank_offset = array of 256 zeros
+
+        // 3. Global start of each bucket
+        bucket_start[0] = 0
+        for k = 1 to 255:
+            bucket_start[k] = bucket_start[k-1] + total[k-1]
+
+        // 4. Stable local counting sort by byte i, so elements are grouped by
+        //    bucket; their global positions are then increasing, which means
+        //    elements going to the same destination rank are contiguous
+        STABLE-COUNTING-SORT-256(A, byte i)
+
+        // 5. Global position of each element → destination rank
+        sendcounts = array of p zeros
+        seen = array of 256 zeros
+        for j = 0 to local_n-1:
+            k = (A[j] >> shift) & 0xFF
+            pos = bucket_start[k] + rank_offset[k] + seen[k]
+            seen[k] += 1
+            sendcounts[pos / local_n] += 1
+
+        // 6. Exchange counts, then exchange the data
+        MPI_Alltoall(sendcounts, 1, MPI_INT, recvcounts, 1, MPI_INT, MPI_COMM_WORLD)
+        sdispls, rdispls = exclusive prefix sums of sendcounts, recvcounts
+        MPI_Alltoallv(A, sendcounts, sdispls, MPI_INT,
+                      B, recvcounts, rdispls, MPI_INT, MPI_COMM_WORLD)
+
+        // 7. B arrives grouped by source rank. A stable sort by byte i puts it in
+        //    global order (within a bucket, lower ranks come first)
+        STABLE-COUNTING-SORT-256(B, byte i)
+        A = B        // each rank again holds exactly local_n elements
+
+    // Correctness check
+    MPI_Sendrecv(A[local_n-1] to rank+1, first element of rank+1 from rank+1)
+    MPI_Allreduce(local_ok, global_ok, 1, MPI_INT, MPI_LAND, MPI_COMM_WORLD)
+
+    MPI_Finalize()
+```
+
 ### 2c. Evaluation plan - what and how will you measure and compare
 
-- Input sizes, Input types
-- Strong scaling (same problem size, increase number of processors/nodes)
-- Weak scaling (increase problem size, increase number of processors)
+**Data:** 32-bit non-negative integers (`int`), generated at runtime on each rank (`data_init_runtime`).
+
+**Input types:** Sorted, Reverse sorted, Random (uniform), 1% perturbed (sorted, then 1% of elements swapped at random positions).
+
+**Input sizes:** 2^16, 2^18, 2^20, 2^22, 2^24, 2^26, 2^28
+
+**Processes (MPI ranks):** 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024
+→ 7 sizes × 4 types × 10 process counts = 280 runs per algorithm.
+
+**Strong scaling:** For each input size and input type, hold the total problem size fixed and increase the number of processes. We will plot time vs. num_procs and speedup (T_2 / T_p) for `main`, `comm`, and `comp_large`.
+
+**Weak scaling:** Hold the elements per process (n/p) constant while increasing p. Sizes grow 4× per step while process counts grow 2× per step, so we take the diagonals of the run grid where n/p is constant, e.g. n/p = 2^14: (2^16, 4), (2^18, 16), (2^20, 64), (2^22, 256), (2^24, 1024). We will plot time vs. num_procs for each input type; ideal weak scaling is a flat line.
+
+**Metrics (Caliper + Thicket):** min, max, and average time per rank, total time, and variance of time per rank, for `main`, `comm` (`comm_small`/`comm_large`), and `comp` (`comp_small`/`comp_large`). Comparing max with average time per rank shows load imbalance. The comm-to-comp ratio shows where each algorithm stops scaling.
+
+**Comparison:** All four algorithms (bitonic, sample, merge, radix) run on the same grid on Grace, so we can compare them directly at each (size, type, procs) point.
 
 ### 3a. Caliper instrumentation
 
