@@ -15,7 +15,7 @@ Communicating through iMessage
 ### 2a. Brief project description (what algorithms will you be comparing and on what architectures)
 
 - Bitonic Sort:
-- Sample Sort:
+- Sample Sort: Zach Smith
 - Merge Sort:
 - Radix Sort: Sandeep Kandrigi
 
