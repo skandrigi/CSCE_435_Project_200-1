@@ -14,7 +14,7 @@ Communicating through iMessage
 
 ### 2a. Brief project description (what algorithms will you be comparing and on what architectures)
 
-- Bitonic Sort:
+- Bitonic Sort: Benjamin Aleman
 - Sample Sort: Zach Smith
 - Merge Sort:
 - Radix Sort: Sandeep Kandrigi
@@ -22,6 +22,113 @@ Communicating through iMessage
 ### 2b. Pseudocode for each parallel algorithm
 
 - For MPI programs, include MPI calls you will use to coordinate between processes
+
+Bitonic Sort Pseudocode (recursive):
+```
+BITONIC-SORT(A, low, cnt, dir):
+    // A: array of n integers, n a power of 2
+    // sorts A[low .. low+cnt-1]; dir = 1 ascending, dir = 0 descending
+    // top-level call is BITONIC-SORT(A, 0, n, 1)
+    if cnt > 1:
+        k = cnt / 2
+
+        // 1. Sort the halves in opposite directions → together the two
+        //    halves form a bitonic sequence (values rise, then fall)
+        BITONIC-SORT(A, low, k, 1)
+        BITONIC-SORT(A, low + k, k, 0)
+
+        // 2. Merge that bitonic sequence into sorted order
+        BITONIC-MERGE(A, low, cnt, dir)
+
+BITONIC-MERGE(A, low, cnt, dir):
+    // A[low .. low+cnt-1] is bitonic
+    if cnt > 1:
+        k = cnt / 2
+
+        // 1. Compare elements k apart → for dir = 1, every value in the
+        //    first half ends up <= every value in the second half
+        for i = low to low + k - 1:
+            COMP-AND-SWAP(A, i, i + k, dir)
+
+        // 2. Each half is still bitonic, so merge both the same way
+        BITONIC-MERGE(A, low, k, dir)
+        BITONIC-MERGE(A, low + k, k, dir)
+
+COMP-AND-SWAP(A, i, j, dir):
+    // swap only when the pair is in the wrong order for dir
+    if dir == (A[i] > A[j]):
+        swap A[i], A[j]
+```
+
+Bitonic Sort Pseudocode (iterative):
+```
+BITONIC-SORT-ITERATIVE(A, n):
+    // A: array of n integers, n a power of 2
+    // the same network as above, flattened into loops → log n stages of up to
+    // log n steps each, so (log n)(log n + 1)/2 compare-exchange steps and
+    // O(n log^2 n) work. The parallel version mirrors this form, one rank
+    // standing in for each element
+
+    // 1. Stages: k = length of the bitonic sequences being merged
+    for k = 2, 4, 8, ..., n:
+
+        // 2. Steps: j = distance to the partner element
+        for j = k/2, k/4, ..., 1:
+
+            // 3. Compare-exchange every pair j apart, ascending or descending
+            //    as element i's position inside its k-block calls for
+            for i = 0 to n-1:
+                l = i ^ j
+                if l > i:
+                    COMP-AND-SWAP(A, i, l, (i & k) == 0)
+```
+
+Parallel Bitonic Sort Pseudocode (MPI, block-based):
+```
+PARALLEL-BITONIC-SORT(n):
+    // n: total number of elements, p: number of MPI ranks
+    // each rank holds local_n = n / p elements (n, p are powers of 2)
+    MPI_Init()
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank)
+    MPI_Comm_size(MPI_COMM_WORLD, &p)
+    local_n = n / p
+    A = generate local_n non-negative ints for this rank
+
+    // 1. Sort local data, so every rank holds one sorted block           // comp_large
+    SORT(A)
+
+    // 2. Run the network of BITONIC-SORT-ITERATIVE over ranks instead of
+    //    elements: one rank per item, so log p stages of up to log p steps
+    for k = 2, 4, 8, ..., p:
+        for j = k/2, k/4, ..., 1:
+            partner = rank ^ j
+            ascending = ((rank & k) == 0)
+
+            // 3. Trade whole local blocks with the partner               // comm_large
+            MPI_Sendrecv(A, local_n, MPI_INT, partner, tag,
+                         B, local_n, MPI_INT, partner, tag,
+                         MPI_COMM_WORLD, &status)
+
+            // 4. A and B are both sorted → merge them and keep the half this
+            //    rank is owed, leaving A sorted for the next step        // comp_large
+            merged = MERGE(A, B)
+            if ascending == (rank < partner):
+                A = merged[0 .. local_n-1]           // smaller half
+            else:
+                A = merged[local_n .. 2*local_n-1]   // larger half
+            // only one half is ever used, so stop merging after local_n
+
+    // rank 0 now holds the smallest local_n elements, rank 1 the next, and
+    // so on; every rank still holds exactly local_n
+
+    // Correctness check
+    // A is sorted locally, and every element on rank r <= every element on
+    // rank r+1, so only the block boundaries need checking
+    MPI_Sendrecv(A[local_n-1] to rank+1, first element of rank+1 from rank+1)
+    MPI_Allreduce(local_ok, global_ok, 1, MPI_INT, MPI_LAND, MPI_COMM_WORLD)
+
+    MPI_Finalize()
+```
 
 Radix Sort Pseudocode (BASE 10):
 ```
