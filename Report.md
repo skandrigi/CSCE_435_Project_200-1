@@ -147,6 +147,99 @@ PARALLEL-RADIX-SORT-256(n):
     MPI_Finalize()
 ```
 
+Sample Sort Pseudocode:
+```
+SAMPLE-SORT(A, k, s):
+    // A: array of n integers
+    // k: number of buckets, s: oversampling factor (samples per bucket)
+
+    // 1. Pick k*s random samples and sort them
+    samples = k*s elements chosen at random from A
+    SORT(samples)
+
+    // 2. Every s-th sample becomes a splitter → k-1 splitters
+    for i = 1 to k-1:
+        splitters[i-1] = samples[i*s]
+
+    // 3. Place each element in its bucket
+    //    bucket b holds splitters[b-1] < x <= splitters[b]
+    buckets = k empty lists
+    for j = 0 to n-1:
+        b = LOWER-BOUND(splitters, A[j])   // binary search, first splitter >= A[j]
+        append A[j] to buckets[b]
+
+    // 4. Sort each bucket, then concatenate in order
+    for b = 0 to k-1:
+        SORT(buckets[b])
+    A = buckets[0] + buckets[1] + ... + buckets[k-1]
+```
+
+Parallel Sample Sort Pseudocode (MPI, regular sampling):
+```
+PARALLEL-SAMPLE-SORT(n):
+    // n: total number of elements, p: number of MPI ranks
+    // each rank starts with local_n = n / p elements (n, p are powers of 2)
+    MPI_Init()
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank)
+    MPI_Comm_size(MPI_COMM_WORLD, &p)
+    local_n = n / p
+    A = generate local_n non-negative ints for this rank
+
+    // 1. Sort local data                                                 // comp_large
+    SORT(A)
+
+    // 2. Pick p-1 evenly spaced samples from the sorted local data       // comp_small
+    for i = 0 to p-2:
+        samples[i] = A[(i+1) * local_n / p]
+
+    // 3. Gather all p*(p-1) samples on rank 0                            // comm_small
+    MPI_Gather(samples, p-1, MPI_INT,
+               all_samples, p-1, MPI_INT, 0, MPI_COMM_WORLD)
+
+    // 4. Rank 0 sorts the samples and picks p-1 splitters                // comp_small
+    if rank == 0:
+        SORT(all_samples)
+        for i = 0 to p-2:
+            splitters[i] = all_samples[(i+1) * (p-1)]
+
+    // 5. Send the splitters to every rank                                // comm_small
+    MPI_Bcast(splitters, p-1, MPI_INT, 0, MPI_COMM_WORLD)
+
+    // 6. A is sorted, so each destination rank's elements are contiguous;
+    //    find the bucket boundaries with binary search                   // comp_small
+    //    rank d receives splitters[d-1] < x <= splitters[d]
+    start = 0
+    for d = 0 to p-2:
+        end = UPPER-BOUND(A, splitters[d])   // first index with A[j] > splitters[d]
+        sendcounts[d] = end - start
+        start = end
+    sendcounts[p-1] = local_n - start
+
+    // 7. Exchange counts, then exchange the data
+    MPI_Alltoall(sendcounts, 1, MPI_INT, recvcounts, 1, MPI_INT, MPI_COMM_WORLD)   // comm_small
+    sdispls, rdispls = exclusive prefix sums of sendcounts, recvcounts
+    recv_n = sum of recvcounts
+    MPI_Alltoallv(A, sendcounts, sdispls, MPI_INT,
+                  B, recvcounts, rdispls, MPI_INT, MPI_COMM_WORLD)                 // comm_large
+
+    // 8. B arrives as p sorted runs (one per source rank);
+    //    merge them into one sorted array                                // comp_large
+    A = P-WAY-MERGE(B, recvcounts, rdispls)
+    // ranks now hold recv_n elements each (not exactly local_n);
+    // regular sampling keeps recv_n < 2 * local_n
+
+    // Correctness check
+    // A is sorted locally, every element on rank r <= every element on rank r+1,
+    // and no elements were lost. Ranks may be empty, so share (count, first, last)
+    MPI_Allgather({recv_n, A[0], A[recv_n-1]}, 3, MPI_INT,
+                  info, 3, MPI_INT, MPI_COMM_WORLD)
+    // sum of the counts in info must equal n; compare own first element
+    // with the last element of the nearest non-empty lower rank
+    MPI_Allreduce(local_ok, global_ok, 1, MPI_INT, MPI_LAND, MPI_COMM_WORLD)
+
+    MPI_Finalize()
+```
+
 ### 2c. Evaluation plan - what and how will you measure and compare
 
 **Data:** 32-bit non-negative integers (`int`), generated at runtime on each rank (`data_init_runtime`).
