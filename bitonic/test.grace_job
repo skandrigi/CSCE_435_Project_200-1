@@ -1,0 +1,41 @@
+#!/bin/bash
+# Small correctness tests on one compute node:  sbatch test.grace_job
+#SBATCH --job-name=test_bitonic
+#SBATCH --time=00:10:00
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=16
+#SBATCH --mem=8G
+#SBATCH --output=logs/test.%j
+
+module load GCC/11.3.0
+module load GCC/12.2.0
+module load NVHPC/22.7-CUDA-11.7.0
+module load OpenMPI/4.1.4
+module load CMake/3.12.1
+module load GCCcore/12.2.0
+module load PAPI/7.0.1
+
+cd "$SLURM_SUBMIT_DIR" || exit 1
+mkdir -p cali_test
+
+# N <= 64 prints the sorted array so it can be checked by hand.
+for P in 1 2 4 8 16; do
+    for T in Sorted ReverseSorted Random 1_perc_perturbed; do
+        echo "--- N=32 P=$P $T"
+        mpirun -np $P ./bitonic 32 $T
+    done
+done
+
+# Realistic sizes; each run also writes a .cali file for a first look in Thicket.
+for N in 65536 1048576; do
+    for P in 2 4 8 16; do
+        for T in Sorted ReverseSorted Random 1_perc_perturbed; do
+            CALI_CONFIG="spot(output=cali_test/test-${T}-${N}-${P}.cali,profile.mpi)" \
+            mpirun -np $P ./bitonic $N $T
+        done
+    done
+done
+
+echo "--- bad arguments (each should print an error and not crash)"
+mpirun -np 4 ./bitonic 1000 Random      # not a power of 2
+mpirun -np 2 ./bitonic 1024 sideways    # unknown input type

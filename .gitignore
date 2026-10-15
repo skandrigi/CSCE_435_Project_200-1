@@ -1,0 +1,10 @@
+# build artifacts (per algorithm folder)
+**/CMakeCache.txt
+**/CMakeFiles/
+**/Makefile
+**/cmake_install.cmake
+**/compile_commands.json
+**/logs/
+**/cali_test/
+**/output.*
+bitonic/bitonic

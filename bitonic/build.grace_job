@@ -1,0 +1,15 @@
+#!/bin/bash
+# Runs build.sh on a compute node:  sbatch build.grace_job
+#SBATCH --job-name=build_bitonic
+#SBATCH --time=00:15:00
+#SBATCH --nodes=1
+#SBATCH --ntasks=4
+#SBATCH --cpus-per-task=1
+#SBATCH --mem=8G
+#SBATCH --output=logs/build.%j
+
+cd "$SLURM_SUBMIT_DIR" || exit 1
+mkdir -p logs
+echo "building in $(pwd) on $(hostname)"
+source build.sh
+ls -l bitonic && echo "BUILD OK" || echo "BUILD FAILED"

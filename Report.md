@@ -467,6 +467,60 @@ They will show up in the `Thicket.metadata` if the caliper file is read into Thi
 
 ### **See the `Builds/` directory to find the correct Caliper configurations to get the performance metrics.** They will show up in the `Thicket.dataframe` when the Caliper file is read into Thicket.
 
+### 3c. Implementation calltrees
+
+**Bitonic Sort (MPI)** -- source in `bitonic/`, built and run on Grace with `bitonic/build.sh`
+and `bitonic/submit.sh`. Bitonic sort has no `comm_small` or `comp_small`: every exchange
+moves a whole local block (`comm_large`) and every computation (local sort, merge-and-keep-half)
+touches the whole block (`comp_large`).
+
+`Thicket.tree()` output (Avg time/rank, seconds) for `bitonic/cali/bitonic-Random-1048576-8-20150766.cali`,
+N = 2^20 random ints on 8 ranks of one Grace node:
+
+```
+# MPI Bitonic Sort
+0.015 main
+├─ 0.000 data_init_runtime
+├─ 0.003 comm
+│  ├─ 0.001 MPI_Barrier
+│  └─ 0.002 comm_large
+│     └─ 0.002 MPI_Sendrecv
+├─ 0.010 comp
+│  └─ 0.010 comp_large
+└─ 0.000 correctness_check
+   ├─ 0.000 MPI_Sendrecv
+   └─ 0.000 MPI_Allreduce
+0.000 MPI_Finalize
+0.000 MPI_Initialized
+0.000 MPI_Finalized
+0.019 MPI_Comm_dup
+```
+
+Same program, N = 2^20 reverse-sorted ints on 16 ranks
+(`bitonic/cali/bitonic-ReverseSorted-1048576-16-20150767.cali`):
+
+```
+0.015 main
+├─ 0.000 data_init_runtime
+├─ 0.012 comm
+│  ├─ 0.010 MPI_Barrier
+│  └─ 0.002 comm_large
+│     └─ 0.002 MPI_Sendrecv
+├─ 0.002 comp
+│  └─ 0.002 comp_large
+└─ 0.000 correctness_check
+   ├─ 0.000 MPI_Sendrecv
+   └─ 0.000 MPI_Allreduce
+0.000 MPI_Finalize
+0.000 MPI_Initialized
+0.000 MPI_Finalized
+0.028 MPI_Comm_dup
+```
+
+`Thicket.metadata` for these files carries the Adiak fields from 3b: `algorithm=bitonic`,
+`programming_model=mpi`, `data_type=int`, `size_of_data_type=4`, `input_size`, `input_type`,
+`num_procs`, `scalability=strong`, `group_num=200`, `implementation_source`.
+
 ## 4. Performance evaluation
 
 Include detailed analysis of computation performance, communication performance.
